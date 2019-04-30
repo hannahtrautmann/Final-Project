@@ -19,9 +19,12 @@ R files:
 
 Rmarkdown file:
 
-  Analysis_of_qPCR_data_final_project.Rmd - this file contains the exploratory analysis of preliminary qPCR data, along with verification that the code could be applied to different datasets.
+  Analysis_of_qPCR_data_final_project.Rmd - this file contains the exploratory analysis of preliminary qPCR data, along with verification that the code could be applied to different datasets. This file includes all R code.
  
- 
+HTML file:
+
+Analysis_of_qPCR_data_final_project.html - this file contains the exploratory analysis of preliminary qPCR data, along with verification that the code could be applied to different datasets. This file includes only the output, but none of the R code. 
+
 Word file:
 
  Trautmann_Final_Project_paper.doc - this file contains a brief paper to explain the work that was done to generate the data for this analysis, as well as a detailed description of how the calculations were completed. 
