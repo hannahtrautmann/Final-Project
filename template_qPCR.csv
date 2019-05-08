@@ -1,0 +1,13 @@
+Sample,InputRep1,InputRep2,InputRep3,IPRep1,IPRep2,IPRep3,ControlTreatment,ControlGene,Treatment
+1,,,,,,,n,n,1
+2,,,,,,,n,n,1
+3,,,,,,,n,n,1
+4,,,,,,,y,n,2
+5,,,,,,,y,n,2
+6,,,,,,,y,n,2
+7,,,,,,,n,y,3
+8,,,,,,,n,y,3
+9,,,,,,,n,y,3
+10,,,,,,,y,y,4
+11,,,,,,,y,y,4
+12,,,,,,,y,y,4

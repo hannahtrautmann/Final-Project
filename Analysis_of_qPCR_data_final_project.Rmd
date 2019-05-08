@@ -1,0 +1,340 @@
+---
+title: "Exploratory Analysis of qPCR Data"
+author: "Hannah Trautmann"
+date: "May 10, 2019"
+output:
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+## Data Collection
+
+A more in-depth explanation of the experiment is described in the attached paper. In brief, quantitative PCR data was collected to determine enrichment of ribosomal proteins at particular genes. The values collected are termed CP, or crossing point, which represents the PCR cycle number at which each sample reached a certain threshold of fluorescence. Smaller CP values indicate higher amounts of protein at the gene because more DNA was recovered during immunoprecipitation.
+
+The study involved two main variables: (1) treatment of cells with rifampicin or not, and (2) analysis of protein coding or non-protein coding genes. Each set of samples was compared to an input sample, collected prior to immunoprecipitation. The samples could then further be analyzed by comparing test genes to control genes, or by comparing based on treatment with rifampicin. Both comparisons were made in this exploratory analysis, to help determine which is more informative and biologically meaningful. 
+
+## Normalize to Control Gene
+
+The first way to interpret the data is to normalize all treatments to the control gene. In this case, that is the non-protein coding gene for 23s rRNA. 
+
+```{r load data, include=FALSE}
+library("tidyverse")
+raw_cps <- read_csv("raw_data_qpcr.csv")
+```
+
+```{r normalize to control gene}
+raw_long <- gather(raw_cps,
+                   key = "replicate",
+                   value = "cp_value",
+                   InputRep1:IPRep3)
+#this gets summary stats for our three technical replicates
+average_cps_inputs <- filter(raw_long, grepl("Input", replicate)) %>% 
+  group_by(Sample) %>% 
+  summarize(Inputaverage=mean(cp_value), Inputstandard_deviation=sd(cp_value))
+
+average_cps_IPs <- filter(raw_long, grepl("IP", replicate)) %>% 
+  group_by(Sample) %>% 
+  summarize(IPaverage=mean(cp_value), IPstandard_deviation=sd(cp_value))
+
+
+#combine averages with description of treatments
+treatments <- subset(raw_cps, select = -(InputRep1:IPRep3))
+summary_cps <- left_join(average_cps_IPs, treatments, by = "Sample")
+summary_cps <- left_join(average_cps_inputs, summary_cps, by = "Sample")
+
+#find delta cp
+summary_cps$delta_cps <- (summary_cps$IPaverage - summary_cps$Inputaverage)
+
+#average delta cp
+ave_delta_cp <- summary_cps %>% group_by(Treatment) %>%
+  summarize(ave_dcp = mean(delta_cps), sd_delta_cp = sd(delta_cps))
+treatments <- subset(treatments, select = -(Sample))
+treatments <- treatments[order(treatments$Treatment), ]
+treatments <- treatments[!duplicated(treatments), ]
+ave_delta_cp <- left_join(treatments, ave_delta_cp, by = "Treatment")
+
+#delta delta cp
+treated <- filter(ave_delta_cp, ControlTreatment == "n")
+treated <- treated[order(treated$ControlGene), c(2,4:5)]
+treated_ddcp_gene1 <- -(diff(treated$ave_dcp))
+treated_ddcp_gene2 <- 0
+control <- filter(ave_delta_cp, ControlTreatment == "y")
+control <- control[order(control$ControlGene), c(2,4:5)]
+control_ddcp_gene1 <- -(diff(control$ave_dcp))
+control_ddcp_gene2 <- 0
+
+#s
+treated_sd <- as.vector(treated$sd_delta_cp)
+treated_s_gene1 <- ((treated_sd[1]^2) + (treated_sd[2]^2))^(1/2)
+treated_s_gene2 <- ((treated_sd[1]^2) + (treated_sd[1]^2))^(1/2)
+control_sd <- as.vector(control$sd_delta_cp)
+control_s_gene1 <- ((control_sd[1]^2) + (control_sd[2]^2))^(1/2)
+control_s_gene2 <- ((control_sd[1]^2) + (control_sd[1]^2))^(1/2)
+
+#put into df
+ddcp <- data.frame(treated_ddcp_gene1, treated_ddcp_gene2, control_ddcp_gene1, control_ddcp_gene2)
+s <- data.frame(treated_s_gene1, treated_s_gene2, control_s_gene1, control_s_gene2)
+
+#label with your treatments and controls
+treatment_vector <- c('Rifampicin', 'Rifampicin', 'NoRifampicin', 'NoRifampicin')
+gene_vector <- c('ProteinCoding', 'NonProteinCoding', 'ProteinCoding', 'NonProteinCoding')
+treatment_number <- c('1', '2', '3', '4')
+ddcp_long <- gather(ddcp,
+                    key = "type",
+                    value = "ddcp",
+                    treated_ddcp_gene1:control_ddcp_gene2)
+s_long <- gather(s,
+                 key = "type",
+                 value = "sd",
+                 treated_s_gene1:control_s_gene2)
+ddcp_long <- cbind(ddcp_long, treatment=treatment_vector)
+ddcp_long <- cbind(ddcp_long, gene=gene_vector)
+ddcp_long <- cbind(ddcp_long, treat_num=treatment_number)
+s_long <- cbind(s_long, treatment=treatment_vector)
+s_long <- cbind(s_long, gene=gene_vector)
+s_long <- cbind(s_long, treat_num=treatment_number)
+
+#normalized for primer efficiency
+ddcp_long$norm_ddcp <- cbind(1.8^(-ddcp_long$ddcp))
+
+#combine_columns
+norm_ddcp_and_s <- left_join(ddcp_long, s_long, by = "treat_num")
+
+#plus and minus s
+norm_ddcp_and_s$ddcp_plus_s <- (norm_ddcp_and_s$ddcp + norm_ddcp_and_s$sd)
+norm_ddcp_and_s$ddcp_minus_s <- (norm_ddcp_and_s$ddcp - norm_ddcp_and_s$sd)
+
+#normalize plus and minus s
+norm_ddcp_and_s$norm_ddcp_plus_s <- cbind(1.8^(-norm_ddcp_and_s$ddcp_plus_s))
+norm_ddcp_and_s$norm_ddcp_minus_s <- cbind(1.8^(-norm_ddcp_and_s$ddcp_minus_s))
+
+#plot
+cols <- c("NoRifampicin" ="blue", "Rifampicin" = "red")
+ggplot(norm_ddcp_and_s, aes(gene.x, norm_ddcp, fill=treatment.x)) + 
+  geom_bar(stat="identity", position=position_dodge(width=0.8), width=0.5) +
+  geom_errorbar(aes(ymin=norm_ddcp_minus_s, ymax=norm_ddcp_plus_s), position = position_dodge(0.8), width = 0.1) +
+  scale_fill_manual(values=cols, name="Treatment") + 
+  labs(x="Gene", y="Protein Fold Enrichment")
+
+```
+
+Figure 1: qPCR results normalized to non-protein coding gene. Red bars represent those treated with rifampicin, while blue bars represent control treatment. Protein coding refers to amplification of FTL_1364 and non-protein coding refers to 23s rRNA. 
+
+These results appear to show that there is not a significant difference between the control genes and the protein-coding genes. However, it is more difficult to compare the effect of the rifampicin treatment.
+
+## Normalize to Control Treatment
+
+The second way to analyze the data is to normalize the data to the control treatment. In this case, that is the "no rifampicin" treatment. 
+
+
+```{r normalized to control treatment}
+raw_long <- gather(raw_cps,
+                             key = "replicate",
+                             value = "cp_value",
+                             InputRep1:IPRep3)
+#this gets summary stats for our three technical replicates
+average_cps_inputs <- filter(raw_long, grepl("Input", replicate)) %>% 
+                        group_by(Sample) %>% 
+                        summarize(Inputaverage=mean(cp_value), Inputstandard_deviation=sd(cp_value))
+
+average_cps_IPs <- filter(raw_long, grepl("IP", replicate)) %>% 
+  group_by(Sample) %>% 
+  summarize(IPaverage=mean(cp_value), IPstandard_deviation=sd(cp_value))
+
+
+#combine averages with description of treatments
+treatments <- subset(raw_cps, select = -(InputRep1:IPRep3))
+summary_cps <- left_join(average_cps_IPs, treatments, by = "Sample")
+summary_cps <- left_join(average_cps_inputs, summary_cps, by = "Sample")
+
+#find delta cp
+summary_cps$delta_cps <- (summary_cps$IPaverage - summary_cps$Inputaverage)
+
+#average delta cp
+ave_delta_cp <- summary_cps %>% group_by(Treatment) %>%
+                            summarize(ave_dcp = mean(delta_cps), sd_delta_cp = sd(delta_cps))
+treatments <- subset(treatments, select = -(Sample))
+treatments <- treatments[order(treatments$Treatment), ]
+treatments <- treatments[!duplicated(treatments), ]
+ave_delta_cp <- left_join(treatments, ave_delta_cp, by = "Treatment")
+
+#delta delta cp
+gene1 <- filter(ave_delta_cp, ControlGene == "n")
+gene1 <- gene1[order(gene1$ControlTreatment), c(1,4:5)]
+gene1_ddcp_trtd <- -(diff(gene1$ave_dcp))
+gene1_ddcp_control <- 0
+gene2 <- filter(ave_delta_cp, ControlGene == "y")
+gene2 <- gene2[order(gene2$ControlTreatment), c(1,4:5)]
+gene2_ddcp_trtd <- -(diff(gene2$ave_dcp))
+gene2_ddcp_control <- 0
+
+#s
+gene1_sd <- as.vector(gene1$sd_delta_cp)
+gene1_s_trtd <- ((gene1_sd[1]^2) + (gene1_sd[2]^2))^(1/2)
+gene1_s_control <- ((gene1_sd[1]^2) + (gene1_sd[1]^2))^(1/2)
+gene2_sd <- as.vector(gene2$sd_delta_cp)
+gene2_s_trtd <- ((gene2_sd[1]^2) + (gene2_sd[2]^2))^(1/2)
+gene2_s_control <- ((gene2_sd[1]^2) + (gene2_sd[1]^2))^(1/2)
+
+#put into df
+ddcp <- data.frame(gene1_ddcp_trtd, gene1_ddcp_control, gene2_ddcp_trtd, gene2_ddcp_control)
+s <- data.frame(gene1_s_trtd, gene1_s_control, gene2_s_trtd, gene2_s_control)
+#label with your treatments and controls
+treatment_vector <- c('Rifampicin', 'NoRifampicin', 'Rifampicin', 'NoRifampicin')
+gene_vector <- c('ProteinCoding', 'ProteinCoding', 'NonProteinCoding', 'NonProteinCoding')
+treatment_number <- c('1', '2', '3', '4')
+ddcp_long <- gather(ddcp,
+                key = "type",
+                value = "ddcp",
+                gene1_ddcp_trtd:gene2_ddcp_control)
+s_long <- gather(s,
+                    key = "type",
+                    value = "sd",
+                    gene1_s_trtd:gene2_s_control)
+ddcp_long <- cbind(ddcp_long, treatment=treatment_vector)
+ddcp_long <- cbind(ddcp_long, gene=gene_vector)
+ddcp_long <- cbind(ddcp_long, treat_num=treatment_number)
+s_long <- cbind(s_long, treatment=treatment_vector)
+s_long <- cbind(s_long, gene=gene_vector)
+s_long <- cbind(s_long, treat_num=treatment_number)
+
+#normalized for primer efficiency
+ddcp_long$norm_ddcp <- cbind(1.8^(-ddcp_long$ddcp))
+
+
+#combine_columns
+norm_ddcp_and_s <- left_join(ddcp_long, s_long, by = "treat_num")
+
+#plus and minus s
+norm_ddcp_and_s$ddcp_plus_s <- (norm_ddcp_and_s$ddcp + norm_ddcp_and_s$sd)
+norm_ddcp_and_s$ddcp_minus_s <- (norm_ddcp_and_s$ddcp - norm_ddcp_and_s$sd)
+
+#normalize plus and minus s
+norm_ddcp_and_s$norm_ddcp_plus_s <- cbind(1.8^(-norm_ddcp_and_s$ddcp_plus_s))
+norm_ddcp_and_s$norm_ddcp_minus_s <- cbind(1.8^(-norm_ddcp_and_s$ddcp_minus_s))
+
+#plot
+cols <- c("NoRifampicin" ="blue", "Rifampicin" = "red")
+ggplot(norm_ddcp_and_s, aes(gene.x, norm_ddcp, fill=treatment.x)) + 
+  geom_bar(stat="identity", position=position_dodge(width=0.8), width=0.5) +
+  geom_errorbar(aes(ymin=norm_ddcp_minus_s, ymax=norm_ddcp_plus_s), position = position_dodge(0.8), width = 0.1) +
+  scale_fill_manual(values=cols, name="Treatment") + 
+  labs(x="Gene", y="Protein Fold Enrichment")
+  
+```
+
+Figure 2: qPCR results normalized to control treatment, with no rifampicin added. Red bars represent those treated with rifampicin, while blue bars represent control treatment. Protein coding refers to amplification of FTL_1364 and non-protein coding refers to 23s rRNA. 
+
+In this case, it is clear that the addition of rifampicin does not have a significant impact on the protein coding gene but does appear to lead to decreased association of ribosomes at the 23s rRNA gene. These data indicate that the 23s rRNA gene is a poor control as it is affected by treatment. This tells the researchers that the control must be altered to improve the experiment, and thus the analysis in which our data is normalized to control treatment is the more meaningful approach. 
+
+## Applied to Other Data
+
+In order to test that this R code could easily be used for other datasets, a new set of data with different controls and treatments was analyzed. In this experiment, the "treatment" was a mutation of one amino acid in the protein being analyzed (D51A PmrA-V vs. unmutated PmrA-V) and the genes were PriM (test) and tul4 (control).
+```{r load data 2, include=FALSE}
+raw_cps <- read_csv("raw_data_qpcr2.csv")
+```
+
+```{r other data test}
+raw_long <- gather(raw_cps,
+                   key = "replicate",
+                   value = "cp_value",
+                   InputRep1:IPRep3)
+#this gets summary stats for our three technical replicates
+average_cps_inputs <- filter(raw_long, grepl("Input", replicate)) %>% 
+  group_by(Sample) %>% 
+  summarize(Inputaverage=mean(cp_value), Inputstandard_deviation=sd(cp_value))
+
+average_cps_IPs <- filter(raw_long, grepl("IP", replicate)) %>% 
+  group_by(Sample) %>% 
+  summarize(IPaverage=mean(cp_value), IPstandard_deviation=sd(cp_value))
+
+
+#combine averages with description of treatments
+treatments <- subset(raw_cps, select = -(InputRep1:IPRep3))
+summary_cps <- left_join(average_cps_IPs, treatments, by = "Sample")
+summary_cps <- left_join(average_cps_inputs, summary_cps, by = "Sample")
+
+#find delta cp
+summary_cps$delta_cps <- (summary_cps$IPaverage - summary_cps$Inputaverage)
+
+#average delta cp
+ave_delta_cp <- summary_cps %>% group_by(Treatment) %>%
+  summarize(ave_dcp = mean(delta_cps), sd_delta_cp = sd(delta_cps))
+treatments <- subset(treatments, select = -(Sample))
+treatments <- treatments[order(treatments$Treatment), ]
+treatments <- treatments[!duplicated(treatments), ]
+ave_delta_cp <- left_join(treatments, ave_delta_cp, by = "Treatment")
+
+#delta delta cp
+treated <- filter(ave_delta_cp, ControlTreatment == "n")
+treated <- treated[order(treated$ControlGene), c(2,4:5)]
+treated_ddcp_gene1 <- -diff(treated$ave_dcp)
+treated_ddcp_gene2 <- 0
+control <- filter(ave_delta_cp, ControlTreatment == "y")
+control <- control[order(control$ControlGene), c(2,4:5)]
+control_ddcp_gene1 <- -diff(control$ave_dcp)
+control_ddcp_gene2 <- 0
+
+#s
+treated_sd <- as.vector(treated$sd_delta_cp)
+treated_s_gene1 <- ((treated_sd[1]^2) + (treated_sd[2]^2))^(1/2)
+treated_s_gene2 <- ((treated_sd[1]^2) + (treated_sd[1]^2))^(1/2)
+control_sd <- as.vector(control$sd_delta_cp)
+control_s_gene1 <- ((control_sd[1]^2) + (control_sd[2]^2))^(1/2)
+control_s_gene2 <- ((control_sd[1]^2) + (control_sd[1]^2))^(1/2)
+
+#put into df
+ddcp <- data.frame(treated_ddcp_gene1, treated_ddcp_gene2, control_ddcp_gene1, control_ddcp_gene2)
+s <- data.frame(treated_s_gene1, treated_s_gene2, control_s_gene1, control_s_gene2)
+
+#label with your treatments and controls
+treatment_vector <- c('PmrA-V', 'PmrA-V', 'D51A PmrA-V', 'D51A PmrA-V')
+gene_vector <- c('priM', 'tul4', 'priM', 'tul4')
+treatment_number <- c('1', '2', '3', '4')
+ddcp_long <- gather(ddcp,
+                    key = "type",
+                    value = "ddcp",
+                    treated_ddcp_gene1:control_ddcp_gene2)
+s_long <- gather(s,
+                 key = "type",
+                 value = "sd",
+                 treated_s_gene1:control_s_gene2)
+ddcp_long <- cbind(ddcp_long, treatment=treatment_vector)
+ddcp_long <- cbind(ddcp_long, gene=gene_vector)
+ddcp_long <- cbind(ddcp_long, treat_num=treatment_number)
+s_long <- cbind(s_long, treatment=treatment_vector)
+s_long <- cbind(s_long, gene=gene_vector)
+s_long <- cbind(s_long, treat_num=treatment_number)
+
+#normalized for primer efficiency
+ddcp_long$norm_ddcp <- cbind(1.8^(-ddcp_long$ddcp))
+
+#combine_columns
+norm_ddcp_and_s <- left_join(ddcp_long, s_long, by = "treat_num")
+
+#plus and minus s
+norm_ddcp_and_s$ddcp_plus_s <- (norm_ddcp_and_s$ddcp + norm_ddcp_and_s$sd)
+norm_ddcp_and_s$ddcp_minus_s <- (norm_ddcp_and_s$ddcp - norm_ddcp_and_s$sd)
+
+#normalize plus and minus s
+norm_ddcp_and_s$norm_ddcp_plus_s <- cbind(1.8^(-norm_ddcp_and_s$ddcp_plus_s))
+norm_ddcp_and_s$norm_ddcp_minus_s <- cbind(1.8^(-norm_ddcp_and_s$ddcp_minus_s))
+
+#plot
+cols <- c("PmrA-V" ="blue", "D51A PmrA-V" = "red")
+ggplot(norm_ddcp_and_s, aes(gene.x, norm_ddcp, fill=treatment.x)) + 
+  geom_bar(stat="identity", position=position_dodge(width=0.8), width=0.5) +
+  geom_errorbar(aes(ymin=norm_ddcp_minus_s, ymax=norm_ddcp_plus_s), position = position_dodge(0.8), width = 0.1) +
+  scale_fill_manual(values=cols, name="Treatment") + 
+  labs(x="Gene", y="Protein Fold Enrichment")
+
+```
+
+Figure 3: qPCR results of experiment 2 normalized to control gene tul4. Red bars represent mutant PmrA, while blue bars represent wild-type PmrA. 
+
+
+Indeed, with minor modifications, the R code could successfully be used on a completely different data set to show significant enrichment of unmutated PmrA at the priM gene. Though it was concluded that normalization to control treatment was best in the first experiment, there are other instances where normalizing to the control gene may be preferable, as is the case with the second experiment. Thus, it is wise to keep both sets of R code to easily be able to change analyses on a case-by-case basis. 
+
