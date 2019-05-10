@@ -1,6 +1,6 @@
 #This Code is Meant to Normalize to Control Treatment (ie no rif is set to 1)
-#Enter data on excel sheet and change name of file on line 6
-#To alter the names of columns based on different treatments, change treatment and gene vectors on lines 59 and 60
+#Enter data on excel sheet and change name of file on line 7
+#To alter the names of columns based on different treatments, change treatment and gene vectors on lines 60 and 61
 #To change names on graphs, change cols vector on line 94
 
 library("tidyverse")
